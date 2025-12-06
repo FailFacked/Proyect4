@@ -1,15 +1,19 @@
 using Api.Data;
+using Api.Config;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
-using Api.Config;
 
-// JWT SETTINGS
+var builder = WebApplication.CreateBuilder(args);
+
 var jwtSettings = new JwtSettings();
 builder.Services.AddSingleton(jwtSettings);
+
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddAuthentication(options =>
 {
@@ -20,20 +24,17 @@ builder.Services.AddAuthentication(options =>
 {
     options.TokenValidationParameters = new TokenValidationParameters
     {
-        ValidateIssuer = true,
-        ValidateAudience = true,
+        ValidateIssuer = false,
+        ValidateAudience = false,
         ValidateLifetime = true,
         ValidateIssuerSigningKey = true,
+
         ValidIssuer = jwtSettings.Issuer,
         ValidAudience = jwtSettings.Audience,
         IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.Key))
     };
 });
 
-var builder = WebApplication.CreateBuilder(args);
-
-IServiceCollection serviceCollection = builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
@@ -43,10 +44,13 @@ if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
-    app.UseAuthentication();
+}
+
+app.UseHttpsRedirection();
+app.UseAuthentication();
 app.UseAuthorization();
 
-}
+
 string GenerateJwt(string username, JwtSettings jwtSettings)
 {
     var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.Key));
@@ -68,17 +72,20 @@ string GenerateJwt(string username, JwtSettings jwtSettings)
 
     return new JwtSecurityTokenHandler().WriteToken(token);
 }
-app.MapPost("/login", (Api.Models.User loginUser, JwtSettings jwtSettings) =>
+
+
+app.MapPost("/login", async (Api.Models.User loginUser, AppDbContext db, JwtSettings jwtSettings) =>
 {
-    // Aquí deberías validar las credenciales del usuario contra tu base de datos
-    if (loginUser.Username == "admin" && loginUser.Password == "password")
-    {
-        var token = GenerateJwt(loginUser.Username, jwtSettings);
-        return Results.Ok(new { Token = token });
-    }
-    return Results.Unauthorized();
+    var user = await db.Users
+        .FirstOrDefaultAsync(u => u.Username == loginUser.Username && u.Password == loginUser.Password);
+
+    if (user == null)
+        return Results.Unauthorized();
+
+    var token = GenerateJwt(user.Username, jwtSettings);
+    return Results.Ok(new { Token = token });
 });
-app.UseHttpsRedirection();
+
 
 app.MapGet("/users", async (AppDbContext db) =>
 {
@@ -90,6 +97,5 @@ app.MapGet("/users/{id}", async (int id, AppDbContext db) =>
     var user = await db.Users.FindAsync(id);
     return user is null ? Results.NotFound() : Results.Ok(user);
 });
-
 
 app.Run();
