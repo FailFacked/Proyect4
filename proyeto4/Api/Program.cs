@@ -3,18 +3,20 @@ using Api.Config;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
 using System.Text;
+using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// JWT CONFIG
 var jwtSettings = new JwtSettings();
 builder.Services.AddSingleton(jwtSettings);
 
+// DB CONTEXT
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+// AUTHENTICATION
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -24,17 +26,19 @@ builder.Services.AddAuthentication(options =>
 {
     options.TokenValidationParameters = new TokenValidationParameters
     {
-        ValidateIssuer = false,
-        ValidateAudience = false,
+        ValidateIssuer = true,
+        ValidateAudience = true,
         ValidateLifetime = true,
         ValidateIssuerSigningKey = true,
-
         ValidIssuer = jwtSettings.Issuer,
         ValidAudience = jwtSettings.Audience,
         IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.Key))
     };
 });
 
+// ⬅️ AGREGA ESTO
+builder.Services.AddAuthorization();
+// SWAGGER
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
@@ -46,23 +50,21 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
 
-
+// LOGIN ENDPOINT
 string GenerateJwt(string username, JwtSettings jwtSettings)
 {
-    var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.Key));
-    var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
+    var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.Key));
+    var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
     var claims = new[]
     {
         new Claim(ClaimTypes.Name, username),
-        new Claim(ClaimTypes.Role, "Admin")
     };
 
-    var token = new JwtSecurityToken(
+    var token = new System.IdentityModel.Tokens.Jwt.JwtSecurityToken(
         issuer: jwtSettings.Issuer,
         audience: jwtSettings.Audience,
         claims: claims,
@@ -70,32 +72,25 @@ string GenerateJwt(string username, JwtSettings jwtSettings)
         signingCredentials: credentials
     );
 
-    return new JwtSecurityTokenHandler().WriteToken(token);
+    return new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler().WriteToken(token);
 }
 
-
-app.MapPost("/login", async (Api.Models.User loginUser, AppDbContext db, JwtSettings jwtSettings) =>
+app.MapPost("/login", (Api.Models.User u, JwtSettings jwt) =>
 {
-    var user = await db.Users
-        .FirstOrDefaultAsync(u => u.Username == loginUser.Username && u.Password == loginUser.Password);
+    if (u.Username == "Admin" && u.Password == "Admin")
+    {
+        var token = GenerateJwt(u.Username, jwt);
+        return Results.Ok(new { token });
+    }
 
-    if (user == null)
-        return Results.Unauthorized();
-
-    var token = GenerateJwt(user.Username, jwtSettings);
-    return Results.Ok(new { Token = token });
+    return Results.Unauthorized();
 });
-
 
 app.MapGet("/users", async (AppDbContext db) =>
 {
     return await db.Users.ToListAsync();
 });
-
-app.MapGet("/users/{id}", async (int id, AppDbContext db) =>
-{
-    var user = await db.Users.FindAsync(id);
-    return user is null ? Results.NotFound() : Results.Ok(user);
-});
-
+Console.WriteLine($"KEY: {jwtSettings.Key}");
+Console.WriteLine($"ISSUER: {jwtSettings.Issuer}");
+Console.WriteLine($"AUDIENCE: {jwtSettings.Audience}");
 app.Run();
