@@ -7,9 +7,15 @@ using System.Text;
 using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Configuration.GetConnectionString("DefaultConnection");
+// Cargar JWT desde appsettings o variables de entorno
+var jwtSettings = new JwtSettings
+{
+    Key = builder.Configuration["Jwt:Key"] ?? "DefaultKey123!",
+    Issuer = builder.Configuration["Jwt:Issuer"] ?? "DefaultIssuer",
+    Audience = builder.Configuration["Jwt:Audience"] ?? "DefaultAudience"
+};
 
-// JWT CONFIG
-var jwtSettings = new JwtSettings();
 builder.Services.AddSingleton(jwtSettings);
 
 // DB CONTEXT
@@ -36,14 +42,15 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
-// ⬅️ AGREGA ESTO
+// autorization
 builder.Services.AddAuthorization();
-// SWAGGER
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
+// Swagger
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -53,44 +60,60 @@ if (app.Environment.IsDevelopment())
 app.UseAuthentication();
 app.UseAuthorization();
 
-// LOGIN ENDPOINT
-string GenerateJwt(string username, JwtSettings jwtSettings)
+// Función para generar JWT
+string GenerateJwt(string username, JwtSettings jwt)
 {
-    var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.Key));
-    var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+    var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Key));
+    var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
     var claims = new[]
     {
-        new Claim(ClaimTypes.Name, username),
+        new Claim(ClaimTypes.Name, username)
     };
 
     var token = new System.IdentityModel.Tokens.Jwt.JwtSecurityToken(
-        issuer: jwtSettings.Issuer,
-        audience: jwtSettings.Audience,
+        issuer: jwt.Issuer,
+        audience: jwt.Audience,
         claims: claims,
         expires: DateTime.UtcNow.AddHours(1),
-        signingCredentials: credentials
+        signingCredentials: creds
     );
 
     return new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler().WriteToken(token);
 }
 
+// LOGIN
 app.MapPost("/login", (Api.Models.User u, JwtSettings jwt) =>
 {
     if (u.Username == "Admin" && u.Password == "Admin")
     {
-        var token = GenerateJwt(u.Username, jwt);
-        return Results.Ok(new { token });
+        return Results.Ok(new
+        {
+            token = GenerateJwt(u.Username, jwt)
+        });
     }
 
     return Results.Unauthorized();
 });
 
+// GET USERS
 app.MapGet("/users", async (AppDbContext db) =>
+    await db.Users.ToListAsync()
+);
+
+// ADD USER
+app.MapPost("/users", async (Api.Models.User newUser, AppDbContext db) =>
 {
-    return await db.Users.ToListAsync();
+    if (string.IsNullOrWhiteSpace(newUser.Username) ||
+        string.IsNullOrWhiteSpace(newUser.Password))
+    {
+        return Results.BadRequest("Username and password are required.");
+    }
+
+    db.Users.Add(newUser);
+    await db.SaveChangesAsync();
+
+    return Results.Created($"/users/{newUser.Id}", newUser);
 });
-Console.WriteLine($"KEY: {jwtSettings.Key}");
-Console.WriteLine($"ISSUER: {jwtSettings.Issuer}");
-Console.WriteLine($"AUDIENCE: {jwtSettings.Audience}");
+
 app.Run();

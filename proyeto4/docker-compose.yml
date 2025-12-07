@@ -1,0 +1,37 @@
+version: "3.9"
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: sqlserver2022
+    environment:
+      ACCEPT_EULA: "Y"
+      SA_PASSWORD: "Elcanhumano23!"
+    ports:
+      - "1433:1433"
+    volumes:
+      - sql_data:/var/opt/mssql
+    networks:
+      - backend
+
+  api:
+    build:
+      context: ./Api
+      dockerfile: Dockerfile
+    container_name: api_net8
+    depends_on:
+      - sqlserver
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__DefaultConnection: "Server=sqlserver;Database=ApiDb;User=sa;Password=Elcanhumano23!;TrustServerCertificate=True"
+
+    ports:
+      - "5217:80"
+    networks:
+      - backend
+
+networks:
+  backend:
+
+volumes:
+  sql_data:
