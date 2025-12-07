@@ -19,8 +19,16 @@ var jwtSettings = new JwtSettings
 builder.Services.AddSingleton(jwtSettings);
 
 // DB CONTEXT
+
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"),
+        sqlServerOptions =>
+        {
+            sqlServerOptions.EnableRetryOnFailure(
+                maxRetryCount: 5,
+                maxRetryDelay: TimeSpan.FromSeconds(10),
+                errorNumbersToAdd: null);
+        }));
 
 // AUTHENTICATION
 builder.Services.AddAuthentication(options =>
